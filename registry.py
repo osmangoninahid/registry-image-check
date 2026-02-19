@@ -37,7 +37,8 @@ class RegistryApi(object):
         except urllib2.HTTPError as e:
             headers = e.hdrs.dict
         try:
-            (realm, service, _) = headers['www-authenticate'].split(',')
+            normalized_headers = {k.lower(): v for k, v in headers.items()}
+            (realm, service, _) = normalized_headers['www-authenticate'].split(',')
             return (realm[14:-1:], service[9:-1])
         except Exception as e:
             return None
@@ -96,7 +97,7 @@ class RegistryApi(object):
         req = urllib2.Request(url)
         req.get_method = lambda: 'GET'
         req.add_header('Authorization', r'Bearer %s' % (bear_token,))
-        req.add_header('Accept', 'application/vnd.docker.distribution.manifest.v2+json')
+        req.add_header('Accept', 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json')
         if v1:
             req.add_header('Accept', 'application/vnd.docker.distribution.manifest.v1+json')
         try:
@@ -115,7 +116,7 @@ class RegistryApi(object):
         req = urllib2.Request(url)
         req.get_method = lambda: 'HEAD'
         req.add_header('Authorization', r'Bearer %s' % (bear_token,))
-        req.add_header('Accept', 'application/vnd.docker.distribution.manifest.v2+json')
+        req.add_header('Accept', 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json')
         if v1:
             req.add_header('Accept', 'application/vnd.docker.distribution.manifest.v1+json')
         try:
