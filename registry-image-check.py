@@ -21,8 +21,15 @@ def main():
     options = parser.parse_args()
 
     registryimage = options.registryimage.split('/', 1)
-    registry = RegistryApi(options.username, options.password, "https://" + registryimage[0] + '/')
-    tags = registry.getTagList(registryimage[1])
+    image = registryimage[1]
+    if ':' in image:
+        image, reference = image.rsplit(':', 1)
+    else:
+        reference = "latest"
+    registry = RegistryApi(options.username, options.password,
+                           "https://" + registryimage[0] + '/',
+                           image=image, reference=reference)
+    tags = registry.getTagList(image)
 
     if(tags is None):
         sys.exit(2)

@@ -8,6 +8,7 @@ import urllib2
 import urllib
 import json
 import base64
+import re
 
 
 class RegistryException(Exception):
@@ -17,35 +18,63 @@ class RegistryException(Exception):
 
 class RegistryApi(object):
     """ interact with docker registry and harbor """
-    def __init__(self, username, password, registry_endpoint):
+    def __init__(self, username, password, registry_endpoint, image=None, reference="latest"):
         self.username = username
         self.password = password
         self.basic_token = base64.encodestring("%s:%s" % (str(username), str(password)))[0:-1]
         self.registry_endpoint = registry_endpoint.rstrip('/')
-        #print("%s/v2/_catalog" % (self.registry_endpoint,))
-        auth = self.pingRegistry("%s/v2/_catalog" % (self.registry_endpoint,))
+        # Different registries expose the auth challenge on different endpoints,
+        # so try several candidates and use the first one that returns the
+        # realm/service we need. Order matters: /v2/ is mandated by the OCI
+        # Distribution Spec and works everywhere, the per-repository manifest
+        # endpoint covers registries where /v2/ is anonymously open, and
+        # /v2/_catalog is a Docker-only extension kept last as a final fallback.
+        candidates = ["%s/v2/" % (self.registry_endpoint,)]
+        if image is not None:
+            candidates.append("%s/v2/%s/manifests/%s" % (self.registry_endpoint, image, reference))
+        candidates.append("%s/v2/_catalog" % (self.registry_endpoint,))
+        auth = None
+        for candidate in candidates:
+            auth = self.pingRegistry(candidate)
+            if auth is not None:
+                break
         if auth is None:
             raise RegistryException("get token realm and service failed")
         self.token_endpoint = auth[0]
         self.service = auth[1]
 
     def pingRegistry(self, registry_endpoint):
-        """ ping v2 registry and get realm and service """
-        headers = dict()
+        """ ping a v2 registry endpoint and extract the bearer realm/service
+
+        Returns (realm, service) on a Bearer auth challenge, or None so the
+        caller can fall through to the next candidate endpoint. The challenge
+        is parsed by attribute name rather than by fixed offsets so that it
+        works regardless of attribute order or whether the optional `service`
+        and `scope` attributes are present.
+        """
         try:
-            res = urllib2.urlopen(registry_endpoint)
+            urllib2.urlopen(registry_endpoint)
+            return None  # 200: no auth challenge here, try the next candidate
         except urllib2.HTTPError as e:
+            if e.code != 401:
+                return None
             headers = e.hdrs.dict
-        try:
-            normalized_headers = {k.lower(): v for k, v in headers.items()}
-            (realm, service, _) = normalized_headers['www-authenticate'].split(',')
-            return (realm[14:-1:], service[9:-1])
-        except Exception as e:
+
+        challenge = {k.lower(): v for k, v in headers.items()}.get('www-authenticate', '')
+        if not challenge.lower().startswith('bearer'):
+            return None  # Basic-auth-only registry: the bearer flow does not apply
+
+        params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+        if 'realm' not in params:
             return None
+        return (params['realm'], params.get('service', ''))
 
     def getBearerTokenForScope(self, scope):
         """ get bearer token from harbor """
-        payload = urllib.urlencode({'service': self.service, 'scope': scope})
+        query = {'scope': scope}
+        if self.service:
+            query['service'] = self.service
+        payload = urllib.urlencode(query)
         url = "%s?%s" % (self.token_endpoint, payload)
         req = urllib2.Request(url)
         req.add_header('Authorization', 'Basic %s' % (self.basic_token,))
